@@ -187,29 +187,33 @@ app.get('/phone', async (request, reply) => {
     return reply.status(500).send({ status: false, error: `Specs fetch failed: ${err?.message}` });
   }
 
-  // Step 3 – if review URL exists, scrape camera samples
+  // Step 3 – scrape camera samples and HD image from review/camera page
   let cameraSamples: any[] = [];
   let lensDetails: any[] = [];
   let hdImageUrl: string | null = null;
   if (specs.review_url) {
     try {
-      // Extract slug from full URL:  https://www.gsmarena.com/FOO-review-NNNNpX.php  →  FOO-review-NNNNpX
       const reviewSlug = specs.review_url
         .replace(/^https?:\/\/[^/]+\//, '')
         .replace(/\.php$/, '');
       const reviewData = await getReviewDetails(reviewSlug);
       cameraSamples = reviewData.cameraSamples;
       lensDetails = reviewData.lensDetails ?? [];
-      // Pick the best HD device image from the review page:
-      // 1. First lensDetails sectionImageUrl (lifestyle photo, 1200px)
-      // 2. First heroImage from review page header
-      // 3. Falls back to specs page bigpic
+      // HD image priority:
+      // 1. Lifestyle/inline photo from review (1200px, sharpest)
+      // 2. Hero image from review page header
       const firstLifestyle = lensDetails.find((l: any) => l.sectionImageUrl)?.sectionImageUrl;
       const firstHero = reviewData.heroImages?.[0];
       hdImageUrl = firstLifestyle || firstHero || null;
     } catch {
       cameraSamples = [];
     }
+  }
+  // If no HD image from review, use the specs page bigpic as-is (300px)
+  // It's blurry on high-DPI but better than nothing.
+  // The Android app will display it without further modification.
+  if (!hdImageUrl && specs.imageUrl) {
+    hdImageUrl = specs.imageUrl;
   }
 
   return {
@@ -224,7 +228,7 @@ app.get('/phone', async (request, reply) => {
   };
 });
 
-// ── /:slug must be LAST –it's a catch-all for device specs ──────────────────
+// ── /:slug must be LAST – it's a catch-all for device specs ──────────────────
 app.get('/:slug', async (request) => {
   const slug = (request.params as any).slug;
   const data = await getPhoneDetails(slug);

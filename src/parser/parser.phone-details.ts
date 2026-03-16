@@ -54,27 +54,38 @@ export async function getPhoneDetails(slug: string): Promise<IPhoneDetails> {
       }
     });
 
-    // ── Review link ────────────────────────────────────────────────────────────
-    // Strategy: find the review link whose slug matches the phone's own slug.
-    // GSMArena specs pages can have "related article" links (e.g. "best sounding phones")
-    // which also contain "-review-" — we must prefer the phone's own review.
-    // The phone's review slug always starts with the device slug prefix.
+    // ── Review / camera-samples link ──────────────────────────────────────────
+    // GSMArena uses several URL patterns for review/camera content:
+    //   Standard review  : {device}-review-{id}.php
+    //   Camera samples   : {device}_camera_samples_specs-news-{id}.php
+    //   News article     : {device}-news-{id}.php  (some phones only have this)
+    // We collect ALL candidates and rank them: review > camera_samples > news
     let review_url: string | undefined;
-    // Build a loose match prefix from the page slug (e.g. "apple_iphone_17_pro_max")
     const slugPrefix = slug.replace(/\.php$/, '').split('_').slice(0, 3).join('_').toLowerCase();
+
+    // Score a href: higher = better
+    function reviewScore(href: string): number {
+      if (href.includes('-review-')) return 100;
+      if (href.includes('camera_samples')) return 80;
+      if (href.includes('-news-') && href.includes('camera')) return 60;
+      if (href.includes('-news-')) return 20;
+      return 0;
+    }
+
+    let bestScore = -1;
     $('a').each((_, el) => {
       const href = ($(el).attr('href') || '').toLowerCase();
-      if (!href.includes('-review-') || !href.endsWith('.php')) return;
+      if (!href.endsWith('.php')) return;
+      const score = reviewScore(href);
+      if (score === 0) return;
+      // Must relate to this device — check slug prefix match
+      const linkSlug = href.replace(/^.*\//, '').replace(/-(review|news)-.*$/, '').replace(/_camera_samples.*$/, '');
+      const isThisDevice = linkSlug.startsWith(slugPrefix) || slugPrefix.startsWith(linkSlug.slice(0, 8));
+      if (!isThisDevice) return;
       const candidate = href.startsWith('http') ? href : `${baseUrl}/${href}`;
-      if (!review_url) {
-        // Accept the first review link we find as a fallback
+      if (score > bestScore) {
+        bestScore = score;
         review_url = candidate;
-      }
-      // Prefer a link whose slug starts with the phone slug prefix (best match)
-      const linkSlug = href.replace(/^.*\//, '').replace(/-review-.*$/, '');
-      if (linkSlug.startsWith(slugPrefix)) {
-        review_url = candidate;
-        return false; // break — found the phone's own review
       }
     });
 
