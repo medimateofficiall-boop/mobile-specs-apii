@@ -211,31 +211,31 @@ app.get('/phone', async (request, reply) => {
     await tryCameraUrl(specs.review_url);
   }
 
-  // Attempt 2: if still no samples, search GSMArena for a camera_samples news article.
-  // Mid-range phones (iQOO Z7 Pro etc.) have camera-samples news pages that the
-  // specs page doesn't link to. We search GSMArena's quick-search to find them.
+  // Attempt 2: search GSMArena for a camera_samples news article.
+  // Some phones (e.g. iQOO Z7 Pro) only have a camera-samples news page,
+  // not a full review. The specs page doesn't link to it, so we search directly.
   if (cameraSamples.length === 0) {
     try {
       const { getHtml } = await import('../src/parser/parser.service');
-      const cheerio = (await import('cheerio')).default || await import('cheerio');
-      // Search 1: device name + "camera samples"
-      // Search 2: device slug-based search
-      const queries = [
-        bestMatch.name + ' camera samples',
-        bestMatch.name,
-      ];
+      const { load } = await import('cheerio');
+      // Device base slug without numeric ID suffix: "vivo_iqoo_z7_pro_5g-11843" -> "vivo_iqoo_z7_pro_5g"
+      const deviceBase = deviceSlug.replace(/-\d+$/, '').toLowerCase();
+      const queries = [bestMatch.name, bestMatch.name + ' camera samples'];
       for (const q of queries) {
         if (cameraSamples.length > 0) break;
-        const searchUrl = `https://www.gsmarena.com/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(q)}`;
+        const searchUrl = 'https://www.gsmarena.com/search.php3?sQuickSearch=yes&sName=' + encodeURIComponent(q);
         const html = await getHtml(searchUrl);
-        const $ = (cheerio as any).load ? (cheerio as any).load(html) : (cheerio as any).default.load(html);
+        const $ = load(html);
         const links: string[] = [];
-        $('a').each((_: any, el: any) => {
-          const href = ($(el).attr('href') || '') as string;
-          if (!href.endsWith('.php')) return;
+        $('a[href]').each((_: number, el: any) => {
+          const href: string = $(el).attr('href') || '';
           const lower = href.toLowerCase();
-          if (lower.includes('camera_samples') || (lower.includes('-news-') && lower.includes('camera'))) {
-            links.push(href.startsWith('http') ? href : `https://www.gsmarena.com/${href}`);
+          if (!lower.endsWith('.php')) return;
+          if (!lower.includes(deviceBase)) return;
+          if (lower.includes('camera_samples') || lower.includes('camera-samples') ||
+              (lower.includes('-news-') && lower.includes('camera'))) {
+            const full = href.startsWith('http') ? href : ('https://www.gsmarena.com/' + href);
+            if (!links.includes(full)) links.push(full);
           }
         });
         for (const link of links) {
