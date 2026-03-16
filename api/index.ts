@@ -124,6 +124,95 @@ app.get('/review/:reviewSlug/images', async (request, reply) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified endpoint: search by name → specs + camera samples in one shot
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /phone?name=samsung galaxy s26 ultra
+ *
+ * One endpoint to rule them all. You just type the phone name.
+ * Internally it:
+ *   1. Searches GSMArena for the best match
+ *   2. Fetches full specifications (including device_images)
+ *   3. Follows the review_url and scrapes ALL camera sample categories
+ *
+ * Response shape:
+ * {
+ *   status: true,
+ *   data: {
+ *     // ── from specs page ──
+ *     brand, model, imageUrl, device_images,
+ *     release_date, dimensions, os, storage, specifications,
+ *     review_url,
+ *     // ── from review/camera page ──
+ *     cameraSamples: [
+ *       { label: "Main Camera", images: [...] },
+ *       { label: "Night / Low Light", images: [...] },
+ *       { label: "Zoom", images: [...] },
+ *       { label: "Selfie", images: [...] },
+ *       { label: "Video", images: [...] },
+ *       ...
+ *     ]
+ *   }
+ * }
+ */
+app.get('/phone', async (request, reply) => {
+  const name = (request.query as any).name;
+  if (!name) {
+    return reply.status(400).send({ status: false, error: 'Query param "name" is required. e.g. /phone?name=samsung galaxy s26 ultra' });
+  }
+
+  // Step 1 – search for best match
+  let searchResults;
+  try {
+    searchResults = await parserService.search(name);
+  } catch (err: any) {
+    return reply.status(500).send({ status: false, error: `Search failed: ${err?.message}` });
+  }
+
+  if (!searchResults || searchResults.length === 0) {
+    return reply.status(404).send({ status: false, error: `No device found matching "${name}"` });
+  }
+
+  const bestMatch = searchResults[0];
+  // slug from detail_url is like "/samsung_galaxy_s26_ultra-12548"
+  const deviceSlug = bestMatch.slug.replace(/^\//, '');
+
+  // Step 2 – fetch full specs (includes review_url + device_images)
+  let specs;
+  try {
+    specs = await getPhoneDetails(deviceSlug);
+  } catch (err: any) {
+    return reply.status(500).send({ status: false, error: `Specs fetch failed: ${err?.message}` });
+  }
+
+  // Step 3 – if review URL exists, scrape camera samples
+  let cameraSamples: any[] = [];
+  if (specs.review_url) {
+    try {
+      // Extract slug from full URL:  https://www.gsmarena.com/FOO-review-NNNNpX.php  →  FOO-review-NNNNpX
+      const reviewSlug = specs.review_url
+        .replace(/^https?:\/\/[^/]+\//, '')
+        .replace(/\.php$/, '');
+      const reviewData = await getReviewDetails(reviewSlug);
+      cameraSamples = reviewData.cameraSamples;
+    } catch {
+      // Camera samples are best-effort — don't fail the whole request
+      cameraSamples = [];
+    }
+  }
+
+  return {
+    status: true,
+    matched: bestMatch.name,
+    data: {
+      ...specs,
+      cameraSamples,
+    },
+  };
+});
+
 // ── /:slug must be LAST – it's a catch-all for device specs ──────────────────
 app.get('/:slug', async (request) => {
   const slug = (request.params as any).slug;
