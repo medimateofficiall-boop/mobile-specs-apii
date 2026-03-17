@@ -641,6 +641,35 @@ app.get('/debug', async (request) => {
   return { ok: true, url: request.url, method: request.method };
 });
 
+// Flush stale search cache keys (gsm:search:* and gsm:phone-full:*)
+app.get('/debug/flush-search', async (_request, reply) => {
+  const url   = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return reply.status(500).send({ ok: false, error: 'Env vars missing' });
+
+  const axios = (await import('axios')).default;
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const patterns = ['gsm:search:*', 'gsm:phone-full:*'];
+  let totalDeleted = 0;
+
+  for (const pattern of patterns) {
+    let cursor = '0';
+    do {
+      const scanResp = await axios.post(`${url}/pipeline`, [
+        ['SCAN', cursor, 'MATCH', pattern, 'COUNT', '100']
+      ], { headers, timeout: 15000 });
+      const [nextCursor, keys] = scanResp.data[0].result;
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await axios.post(`${url}/pipeline`, keys.map((k: string) => ['DEL', k]), { headers, timeout: 15000 });
+        totalDeleted += keys.length;
+      }
+    } while (cursor !== '0');
+  }
+
+  return { ok: true, deleted: totalDeleted };
+});
+
 // Flush all gsm:html:* keys from Redis (one-time cleanup)
 app.get('/debug/flush-html', async (_request, reply) => {
   const url   = process.env.UPSTASH_REDIS_REST_URL;
