@@ -947,15 +947,21 @@ app.get('/phone', async (request, reply) => {
     return reply.status(400).send({ status: false, error: 'Query param "name" is required. e.g. /phone?name=samsung galaxy s26 ultra' });
   }
 
-  // Full response cached under a single key — cache hit = instant return
-  const fullCk = `gsm:phone-full:v1:${name.toLowerCase().trim()}`;
+  // Normalise name: lowercase + collapse whitespace (handles URL encoding quirks)
+  const normName = name.toLowerCase().trim().replace(/\s+/g, ' ');
+  const fullCk = `gsm:phone-full:v1:${normName}`;
   const fullCached = await cacheGetWithSource<any>(fullCk);
+
+  // Debug header so you can see exactly what key was checked
+  console.log(`[/phone] raw="${name}" norm="${normName}" ck="${fullCk}" cache=${fullCached.source}`);
+
   if (fullCached.data) {
     const cached = fullCached.data;
     return {
       status: cached.status,
       matched: cached.matched,
       _cache: fullCached.source,
+      _ck: fullCk,
       data: cached.data,
     };
   }
@@ -1044,8 +1050,9 @@ app.get('/phone', async (request, reply) => {
     },
   };
 
-  // Cache the entire assembled response — next request returns instantly
+  // Cache under the normalised key — next request returns instantly
   cacheSet(fullCk, { status: result.status, matched: result.matched, data: result.data });
+  console.log(`[/phone] cached "${normName}" → ${fullCk}`);
 
   return result;
 });
