@@ -10,18 +10,16 @@ function slugToBigpic(slug: string): string {
 }
 
 export async function getHtml(url: string): Promise<string> {
-  const ck = `gsm:html:v1:${url}`;
-  const cached = await cacheGet<string>(ck);
-  if (cached) return cached;
-
+  // No HTML caching — raw HTML is large and wasteful to store.
+  // Each calling function caches its own parsed output instead.
   const { data } = await axios.get(url, {
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     },
+    timeout: 10000,
   });
-  cacheSet(ck, data);
-  return data;
+  return typeof data === 'string' ? data : JSON.stringify(data);
 }
 
 /**

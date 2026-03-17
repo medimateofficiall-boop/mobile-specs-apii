@@ -641,6 +641,40 @@ app.get('/debug', async (request) => {
   return { ok: true, url: request.url, method: request.method };
 });
 
+// Flush all gsm:html:* keys from Redis (one-time cleanup)
+app.get('/debug/flush-html', async (_request, reply) => {
+  const url   = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return reply.status(500).send({ ok: false, error: 'Env vars missing' });
+
+  const axios = (await import('axios')).default;
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  let cursor = '0';
+  let deleted = 0;
+  let scanned = 0;
+
+  do {
+    // SCAN for gsm:html:* keys in batches
+    const scanResp = await axios.post(`${url}/pipeline`, [
+      ['SCAN', cursor, 'MATCH', 'gsm:html:*', 'COUNT', '100']
+    ], { headers, timeout: 15000 });
+
+    const [nextCursor, keys] = scanResp.data[0].result;
+    cursor = nextCursor;
+    scanned += keys.length;
+
+    if (keys.length > 0) {
+      await axios.post(`${url}/pipeline`,
+        keys.map((k: string) => ['DEL', k]),
+        { headers, timeout: 15000 }
+      );
+      deleted += keys.length;
+    }
+  } while (cursor !== '0');
+
+  return { ok: true, scanned, deleted };
+});
+
 // Redis connectivity test
 app.get('/debug/redis', async (_request, reply) => {
   const url   = process.env.UPSTASH_REDIS_REST_URL;
