@@ -8,6 +8,14 @@ import type { IncomingMessage, ServerResponse } from 'http';
 const app = Fastify({ logger: false });
 const parserService = new ParserService();
 
+// Landing page
+app.get('/', async (_request, reply) => {
+  const fs = await import('fs');
+  const path = await import('path');
+  const html = fs.readFileSync(path.join(process.cwd(), 'public', 'index.html'), 'utf-8');
+  reply.type('text/html').send(html);
+});
+
 // Debug route
 app.get('/debug', async (request) => {
   return { ok: true, url: request.url, method: request.method };
