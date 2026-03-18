@@ -178,7 +178,7 @@ export async function getPhoneDetails(slug: string): Promise<IPhoneDetails> {
     
     let review_url: string | undefined;
     
-    // Score a href: higher = better
+    // Score a href: higher=better
     function reviewScore(href: string): number {
       if (href.includes('-review-')) return 100;
       if (href.includes('camera_samples') || href.includes('camera-samples')) return 90;
