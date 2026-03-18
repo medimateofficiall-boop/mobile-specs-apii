@@ -460,13 +460,13 @@ function parseHtmlFallback(html: string, pageUrl: string, brand: string, model: 
     [/^photo$/i,      'photo'],
     [/^video$/i,      'video'],
     [/^audio$/i,      'audio'],
-    [/^display$/i,    'display'],
+    // display is a separate tab on DXOMark, not a camera sub-score — skip
     [/^(zoom|tele)$/i,'zoom'],
     [/^bokeh$/i,      'bokeh'],
     [/^(lowlight|low.?light|night)$/i, 'lowLight'],
     [/^(selfie|front)$/i, 'selfie'],
     [/^portrait$/i,   'portrait'],
-    [/^(ultra.?wide|ultrawide)$/i, 'selfie'], // re-map ultrawide → skip
+    // ultra-wide is a sub-score of photo/video, not mapped to a top-level field
   ];
 
   for (let i = 0; i < allText.length; i++) {
@@ -510,39 +510,79 @@ function parseHtmlFallback(html: string, pageUrl: string, brand: string, model: 
   });
 
   // ── Rankings ───────────────────────────────────────────────────────────────
-  // "29th\nin\nGlobal Ranking" — rank number appears before "in\n[Global Ranking]"
+  // Real HTML structure (confirmed from live fetch):
+  // The rank block text looks like: "29th\n\nin\n\nGlobal Ranking"
+  // The "Global Ranking" and "Ultra-Premium Ranking" are anchor texts.
+  // The ordinal "29th" is a text node in a preceding sibling div.
+  // Strategy: grab the full text of the closest ancestor that contains
+  // both the ordinal AND the ranking link text.
   let rankPosition: number | null = null;
   let rankLabel: string | null = null;
   let rankSegment: string | null = null;
 
-  // Find all links with "Global Ranking" or "Ultra-Premium Ranking" text
-  $('a').each((_: any, el: any) => {
-    const txt = $(el).text().trim();
-    if (txt.includes('Global Ranking') || txt.includes('Ultra-Premium Ranking')) {
-      // The rank number is in the preceding sibling text nodes
-      const parent = $(el).parent();
-      const parentText = parent.text().trim();
-      const m = parentText.match(/(\d+)(st|nd|rd|th)/i);
+  $('a[href*="sort-camera"]').each((_: any, el: any) => {
+    const linkText = $(el).text().trim();
+    const isGlobal = linkText.includes('Global Ranking');
+    const isSegment = linkText.includes('Ranking') && !isGlobal;
+
+    // Walk up to find the container that has the ordinal
+    let ancestor = $(el).parent();
+    for (let i = 0; i < 5; i++) {
+      const ancestorText = ancestor.text().trim();
+      const m = ancestorText.match(/(\d+)(st|nd|rd|th)/i);
       if (m) {
         const pos = parseInt(m[1], 10);
-        if (!rankPosition || txt.includes('Global')) {
+        if (isGlobal && !rankPosition) {
           rankPosition = pos;
-          rankLabel = `#${pos} in ${txt}`;
-          if (txt.includes('Ultra-Premium')) rankSegment = txt;
+          rankLabel = `#${pos} in Global Ranking`;
         }
+        if (isSegment && !rankSegment) {
+          rankSegment = `#${pos} in ${linkText}`;
+        }
+        break;
       }
+      ancestor = ancestor.parent();
     }
   });
 
+  // Fallback: scan full page text for "Nth in Global Ranking" pattern
+  if (!rankPosition) {
+    const fullText = $('body').text();
+    const m = fullText.match(/(\d+)(st|nd|rd|th)\s+in\s+Global Ranking/i);
+    if (m) {
+      rankPosition = parseInt(m[1], 10);
+      rankLabel = `#${rankPosition} in Global Ranking`;
+    }
+  }
+
   // ── Label (GOLD/SILVER etc.) + year ───────────────────────────────────────
-  // "2025" appears near the score badge
+  // GOLD appears as alt text on an img, or as text inside .label element
+  // Year "2025" appears as a standalone text node near the score badge
   let labelYear: string | null = null;
   let labelType: string | null = null;
+
+  // Check img alt attributes for GOLD/SILVER
+  $('img').each((_: any, el: any) => {
+    const alt = ($(el).attr('alt') || '').trim();
+    if (/^(gold|silver|bronze|recommended)$/i.test(alt)) {
+      labelType = alt.toUpperCase();
+    }
+  });
+
+  // Check text nodes for GOLD
+  if (!labelType) {
+    $('*').each((_: any, el: any) => {
+      if ($(el).children().length > 0) return;
+      const txt = $(el).text().trim();
+      if (/^(gold|silver|bronze|recommended)$/i.test(txt)) labelType = txt.toUpperCase();
+    });
+  }
+
+  // Year: find standalone 4-digit year near score section
   $('*').each((_: any, el: any) => {
     if ($(el).children().length > 0) return;
     const txt = $(el).text().trim();
-    if (/^20\d\d$/.test(txt)) labelYear = txt;
-    if (/^(gold|silver|bronze|recommended)$/i.test(txt)) labelType = txt.toUpperCase();
+    if (/^20\d\d$/.test(txt) && !labelYear) labelYear = txt;
   });
 
   return {
@@ -564,7 +604,7 @@ function parseHtmlFallback(html: string, pageUrl: string, brand: string, model: 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function searchDxo(query: string): Promise<IDxoSearchResult[]> {
-  const ck = `dxo:search:v4:${query.toLowerCase().trim()}`;
+  const ck = `dxo:search:v5:${query.toLowerCase().trim()}`;
   const cached = await cacheGet<IDxoSearchResult[]>(ck);
   if (cached) return cached;
 
@@ -599,7 +639,7 @@ export async function searchDxo(query: string): Promise<IDxoSearchResult[]> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
-  const ck = `dxo:page:v4:${pageUrl}`;
+  const ck = `dxo:page:v5:${pageUrl}`;
   const cached = await cacheGet<IDxoScore>(ck);
   if (cached) return cached;
 
@@ -651,7 +691,7 @@ export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getDxoScores(deviceName: string): Promise<IDxoScore | null> {
-  const ck = `dxo:result:v4:${deviceName.toLowerCase().trim()}`;
+  const ck = `dxo:result:v5:${deviceName.toLowerCase().trim()}`;
   const cached = await cacheGet<IDxoScore>(ck);
   if (cached) return cached;
 
