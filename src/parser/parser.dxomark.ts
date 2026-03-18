@@ -561,21 +561,14 @@ function parseHtmlFallback(html: string, pageUrl: string, brand: string, model: 
   let labelYear: string | null = null;
   let labelType: string | null = null;
 
-  // Check img alt attributes for GOLD/SILVER
-  $('img').each((_: any, el: any) => {
-    const alt = ($(el).attr('alt') || '').trim();
-    if (/^(gold|silver|bronze|recommended)$/i.test(alt)) {
-      labelType = alt.toUpperCase();
-    }
-  });
-
-  // Check text nodes for GOLD
-  if (!labelType) {
-    $('*').each((_: any, el: any) => {
-      if ($(el).children().length > 0) return;
-      const txt = $(el).text().trim();
-      if (/^(gold|silver|bronze|recommended)$/i.test(txt)) labelType = txt.toUpperCase();
-    });
+  // GOLD badge is rendered client-side via JS (SVG widget) — not in static HTML.
+  // Infer label from score using DXOMark's published thresholds:
+  // GOLD >= 140, SILVER >= 120, BRONZE >= 100, RECOMMENDED >= 80
+  if (overallScore !== null) {
+    if (overallScore >= 140) labelType = 'GOLD';
+    else if (overallScore >= 120) labelType = 'SILVER';
+    else if (overallScore >= 100) labelType = 'BRONZE';
+    else if (overallScore >= 80)  labelType = 'RECOMMENDED';
   }
 
   // Year: find standalone 4-digit year near score section
@@ -604,7 +597,7 @@ function parseHtmlFallback(html: string, pageUrl: string, brand: string, model: 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function searchDxo(query: string): Promise<IDxoSearchResult[]> {
-  const ck = `dxo:search:v5:${query.toLowerCase().trim()}`;
+  const ck = `dxo:search:v6:${query.toLowerCase().trim()}`;
   const cached = await cacheGet<IDxoSearchResult[]>(ck);
   if (cached) return cached;
 
@@ -639,7 +632,7 @@ export async function searchDxo(query: string): Promise<IDxoSearchResult[]> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
-  const ck = `dxo:page:v5:${pageUrl}`;
+  const ck = `dxo:page:v6:${pageUrl}`;
   const cached = await cacheGet<IDxoScore>(ck);
   if (cached) return cached;
 
@@ -691,7 +684,7 @@ export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getDxoScores(deviceName: string): Promise<IDxoScore | null> {
-  const ck = `dxo:result:v5:${deviceName.toLowerCase().trim()}`;
+  const ck = `dxo:result:v6:${deviceName.toLowerCase().trim()}`;
   const cached = await cacheGet<IDxoScore>(ck);
   if (cached) return cached;
 
