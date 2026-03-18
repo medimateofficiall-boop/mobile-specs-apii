@@ -1387,6 +1387,7 @@ app.get('/dxomark/debug', async (request, reply) => {
 
 app.get('/dxomark', async (request, reply) => {
   const name = (request.query as any).name;
+  const nocache = (request.query as any).nocache === '1';
   if (!name) {
     return reply.status(400).send({
       status: false,
@@ -1395,15 +1396,18 @@ app.get('/dxomark', async (request, reply) => {
   }
 
   try {
-    const data = await getDxoScores(name);
+    const data = await getDxoScores(name, nocache);
     if (!data) {
       return reply.status(400).send({
         status: false,
         error: `Could not parse brand/model from "${name}". Try including the brand e.g. "samsung galaxy s25 ultra".`,
       });
     }
-    // Always return — even _source:"failed" is useful (shows attempted URL + error)
-    return { status: true, data };
+    return {
+      status: true,
+      _cache: nocache ? 'bypassed' : 'hit',
+      data,
+    };
   } catch (err: any) {
     return reply.status(500).send({ status: false, error: err?.message || String(err) });
   }

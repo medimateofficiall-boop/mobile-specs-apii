@@ -684,10 +684,12 @@ export async function searchDxo(query: string): Promise<IDxoSearchResult[]> {
 // Public: scrape a specific DXOMark URL
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
+export async function scrapeDxoPage(pageUrl: string, nocache = false): Promise<IDxoScore> {
   const ck = `dxo:page:v7:${pageUrl}`;
-  const cached = await cacheGet<IDxoScore>(ck);
-  if (cached) return cached;
+  if (!nocache) {
+    const cached = await cacheGet<IDxoScore>(ck);
+    if (cached) return cached;
+  }
 
   const FAILED: IDxoScore = {
     device: '', url: pageUrl, overallScore: null,
@@ -736,21 +738,21 @@ export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
 // Public: main entry point — get DXOMark scores by device name
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getDxoScores(deviceName: string): Promise<IDxoScore | null> {
+export async function getDxoScores(deviceName: string, nocache = false): Promise<IDxoScore | null> {
   const ck = `dxo:result:v7:${deviceName.toLowerCase().trim()}`;
-  const cached = await cacheGet<IDxoScore>(ck);
-  if (cached) return cached;
+  if (!nocache) {
+    const cached = await cacheGet<IDxoScore>(ck);
+    if (cached) return cached;
+  }
 
   const { brand, model } = splitBrandModel(deviceName);
   if (!model) return null;
 
   const url = buildDxoUrl(brand, model);
-  const result = await scrapeDxoPage(url);
+  const result = await scrapeDxoPage(url, nocache);
 
-  // Always cache and return — even failed results show the attempted URL
-  // so the caller knows what URL was tried and can debug
   if (result._source !== 'failed') {
-    cacheSet(ck, result);
+    cacheSet(ck, result); // always overwrite cache with fresh data
   }
-  return result; // never return null — always return what we got
+  return result;
 }
