@@ -1022,27 +1022,14 @@ app.get('/phone', async (request, reply) => {
   const bestMatch = searchResults[0];
   const deviceSlug = bestMatch.slug.replace(/^\//, '');
 
-  // Step 2 – fetch full specs
-  let specs: any;
-  try {
-    specs = await getPhoneDetails(deviceSlug);
-  } catch (err: any) {
-    return reply.status(500).send({ status: false, error: `Specs fetch failed: ${err?.message}` });
-  }
-
-  // Step 3 – scrape camera samples
-  let cameraSamples: any[] = [];
-  let lensDetails: any[] = [];
-  let hdImageUrl: string | null = specs.imageUrl || null;
-  
-  // DEBUG INFO
+  // DEBUG INFO — set up BEFORE getPhoneDetails so its console.logs are captured
   const debug: any = {
-    review_url: specs.review_url || null,
+    review_url: null,
     steps: [],
     logs: [] as string[]
   };
-  
-  // Intercept console.log
+
+  // Intercept console.log BEFORE any scraping starts
   const originalLog = console.log;
   const originalError = console.error;
   console.log = (...args: any[]) => {
@@ -1053,6 +1040,23 @@ app.get('/phone', async (request, reply) => {
     debug.logs.push('ERROR: ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
     originalError(...args);
   };
+
+  // Step 2 – fetch full specs (console.log is now intercepted)
+  let specs: any;
+  try {
+    specs = await getPhoneDetails(deviceSlug);
+  } catch (err: any) {
+    console.log = originalLog;
+    console.error = originalError;
+    return reply.status(500).send({ status: false, error: `Specs fetch failed: ${err?.message}` });
+  }
+
+  // Step 3 – scrape camera samples
+  let cameraSamples: any[] = [];
+  let lensDetails: any[] = [];
+  let hdImageUrl: string | null = specs.imageUrl || null;
+
+  debug.review_url = specs.review_url || null;
 
   const tryCameraUrl = async (url: string): Promise<boolean> => {
     try {
@@ -1105,7 +1109,13 @@ app.get('/phone', async (request, reply) => {
           }
         });
         for (const link of links) {
-          if (await tryCameraUrl(link)) break;
+          if (await tryCameraUrl(link)) {
+            // Found camera samples via fallback — reflect the URL in the response
+            specs.review_url = link;
+            debug.review_url = link;
+            debug.steps.push({ action: 'opinions_fallback_found', url: link });
+            break;
+          }
         }
       }
     } catch { /* opinions page failed */ }
