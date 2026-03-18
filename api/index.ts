@@ -1464,9 +1464,9 @@ app.get('/dxomark', async (request, reply) => {
         // ── Best-in-class (only from review page) ───────────────────
         bestScores: reviewData?.bestScores || null,
 
-        // ── Rank ────────────────────────────────────────────────────
-        rankPosition:  scoresData.rankPosition  || reviewData?.rankPosition  || null,
-        rankLabel:     scoresData.rankLabel      || reviewData?.rankLabel     || null,
+        // ── Rank — review page is more accurate (live rank) vs summary page ──
+        rankPosition:  reviewData?.rankPosition  || scoresData.rankPosition  || null,
+        rankLabel:     reviewData?.rankLabel      || scoresData.rankLabel     || null,
         rankSegment:   (scoresData as any).rankSegment || null,
 
         // ── Badge ───────────────────────────────────────────────────

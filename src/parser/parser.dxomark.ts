@@ -861,13 +861,24 @@ export async function scrapeDxoReview(reviewUrl: string, nocache = false): Promi
   const pros: string[] = [];
   const cons: string[] = [];
   let prosCons = '';
+
+  // Garbage patterns that bleed in from page navigation / lux labels / glossary
+  const GARBAGE_RE = /^\d+\s*(lux|k|ev|db|fps)$/i |
+    /^(spatial|temporal)\s*noise$/i |
+    /^(our company|glossary|press relations|join us|contact|rankings|reviews|about|articles|insights|smartphones|cameras|speakers|laptops)$/i |
+    /^(ΔEV\d|brightness|diana|eugene|illuminance)/i;
+
   $('h6, h5, h4, h3, li').each((_: any, el: any) => {
     const tag = el.name;
     const txt = $(el).text().trim();
     if (/^pros$/i.test(txt)) { prosCons = 'pros'; return; }
     if (/^cons$/i.test(txt)) { prosCons = 'cons'; return; }
-    if (/^(overview|test summary|use cases|scoring|conclusion)/i.test(txt)) { prosCons = ''; return; }
-    if (tag === 'li' && txt.length > 5) {
+    if (/^(overview|test summary|use cases|scoring|conclusion|about dxomark)/i.test(txt)) { prosCons = ''; return; }
+    if (tag === 'li' && txt.length > 5 && txt.length < 200) {
+      // Skip garbage / nav items / lux labels
+      if (GARBAGE_RE.test(txt)) return;
+      // Must look like a sentence (contains space, not just numbers/units)
+      if (!/\s/.test(txt)) return;
       if (prosCons === 'pros') pros.push(txt);
       else if (prosCons === 'cons') cons.push(txt);
     }
@@ -875,23 +886,29 @@ export async function scrapeDxoReview(reviewUrl: string, nocache = false): Promi
 
   // ── Camera sample image scraping ──────────────────────────────────────────────
   //
-  // DXOMark review pages have static HTML sample images in wp-content or CDN.
-  // Structure:
-  //   • Headings (h2/h3/h4) name the category  — "Main Camera samples", "Ultra-Wide"
-  //   • Images appear in <figure> / <img> after those headings
-  //   • Some use data-src or srcset for lazy-load
-  //   • Filter: skip SVG icons, logos, score widgets (<80px or icon/logo/badge in URL)
+  // DXOMark review page structure (confirmed from live HTML):
+  //   <a href="FULLRES.jpg"><img src="THUMB-550x413.jpg"></a>
+  //   Caption text appears as a text node / <em> / <p> immediately after the <a>
+  //
+  // Strategy:
+  //   • Walk headings (h2–h6, #### use-case headings) to track current category
+  //   • For every <a href*=".jpg/png/webp"> wrapping an <img>, use href = full-res
+  //     and img src = thumbnail
+  //   • Caption = next sibling text node or <em>/<p> immediately after the <a>
+  //   • Filter out: site logos, SVG icons, score/widget images
   // ─────────────────────────────────────────────────────────────────────────────
 
   const CATEGORY_PATTERNS: Array<[RegExp, string]> = [
-    [/\bselfie\b|front.?cam|facing/i,          'Selfie'],
-    [/main\s*camera|primary|rear\s*cam/i,      'Main Camera'],
-    [/ultra.?wide|wide.?angle/i,               'Ultra-Wide'],
-    [/tele(photo)?|zoom|periscope/i,           'Telephoto / Zoom'],
-    [/bokeh|portrait|depth/i,                  'Bokeh / Portrait'],
-    [/low.?light|night\s*(mode)?/i,            'Low Light / Night'],
-    [/video/i,                                  'Video'],
-    [/sample|test\s*shot|example|camera/i,     'Sample Shots'],
+    [/\bselfie\b|front.?cam|facing/i,                  'Selfie'],
+    [/main\s*camera|primary|rear\s*cam/i,              'Main Camera'],
+    [/ultra.?wide|wide.?angle/i,                        'Ultra-Wide'],
+    [/tele(photo)?|zoom|periscope/i,                   'Telephoto / Zoom'],
+    [/bokeh|portrait|depth/i,                           'Bokeh / Portrait'],
+    [/low.?light|night\s*(mode)?|lowlight/i,           'Low Light / Night'],
+    [/outdoor|bright\s*light/i,                         'Outdoor'],
+    [/indoor/i,                                         'Indoor'],
+    [/video/i,                                          'Video'],
+    [/sample|test\s*shot|example|camera/i,             'Sample Shots'],
   ];
 
   function detectCategory(text: string): string | null {
@@ -911,45 +928,25 @@ export async function scrapeDxoReview(reviewUrl: string, nocache = false): Promi
     if (!url || url.startsWith('data:')) return false;
     const lower = url.toLowerCase();
     if (lower.includes('.svg')) return false;
-    if (/\b(icon|logo|badge|sprite|pixel\.gif|blank|thumbnail-placeholder)\b/.test(lower)) return false;
-    if (lower.includes('score') && !lower.includes('upload')) return false;
+    if (/\b(icon|logo|badge|sprite|pixel\.gif|blank|placeholder)\b/.test(lower)) return false;
+    // Must be a real image extension
+    if (!/\.(jpe?g|png|webp)($|\?)/i.test(lower)) return false;
     if (url.startsWith('http') || url.startsWith('//')) {
       return lower.includes('dxomark.com') || lower.includes('imgix') || lower.includes('imgproxy');
     }
-    return /\.(jpe?g|png|webp)($|\?)/i.test(lower);
-  }
-
-  function resolveImgUrl(el: any): string | null {
-    const candidates = [
-      $(el).attr('data-src'),
-      $(el).attr('data-lazy-src'),
-      $(el).attr('data-original'),
-      $(el).attr('src'),
-    ].filter(Boolean) as string[];
-
-    for (const c of candidates) {
-      if (isValidDxoImage(c)) return resolveRelative(c);
-    }
-
-    // srcset — pick highest resolution (last item)
-    const srcset = $(el).attr('srcset') || $(el).attr('data-srcset') || '';
-    if (srcset) {
-      const parts = srcset.split(',')
-        .map((s: string) => s.trim().split(/\s+/)[0])
-        .filter(Boolean);
-      const best = parts[parts.length - 1];
-      if (best && isValidDxoImage(best)) return resolveRelative(best);
-    }
-    return null;
+    return true;
   }
 
   const sampleImages: IDxoSampleImage[] = [];
   let currentCategory = 'Sample Shots';
 
-  $('h1,h2,h3,h4,h5,h6,figure,img').each((_: any, el: any) => {
+  // Walk DOM: headings update category, <a><img></a> blocks yield photos
+  const bodyEl = $('body');
+
+  bodyEl.find('*').each((_: any, el: any) => {
     const tag = (el as any).name as string;
 
-    // Update category context on headings
+    // ── Category detection from headings ──
     if (/^h[1-6]$/.test(tag)) {
       const headText = $(el).text().trim();
       const detected = detectCategory(headText);
@@ -957,36 +954,43 @@ export async function scrapeDxoReview(reviewUrl: string, nocache = false): Promi
       return;
     }
 
-    if (tag === 'figure') {
+    // ── Image links: <a href="full.jpg"><img src="thumb.jpg"></a> ──
+    if (tag === 'a') {
+      const href = $(el).attr('href') || '';
+      if (!isValidDxoImage(href)) return;
+
       const imgEl = $(el).find('img').first();
       if (!imgEl.length) return;
-      const url = resolveImgUrl(imgEl.get(0));
-      if (!url) return;
-      const caption = $(el).find('figcaption').text().trim() || imgEl.attr('alt') || null;
-      const thumbSrc = $(el).find('[class*="thumb"],[class*="preview"]').first().attr('src') || null;
+
+      const fullResUrl = resolveRelative(href);
+      const thumbUrl   = imgEl.attr('src') || imgEl.attr('data-src') || null;
+      const thumbResolved = thumbUrl && isValidDxoImage(thumbUrl) ? resolveRelative(thumbUrl) : null;
+
+      // Caption: look at next sibling(s) for a text node or <em>
+      let caption: string | null = null;
+      const parent = $(el).parent();
+      const siblings = parent.contents().toArray();
+      const myIdx = siblings.findIndex((s: any) => s === el);
+      for (let k = myIdx + 1; k < Math.min(myIdx + 4, siblings.length); k++) {
+        const sib = siblings[k];
+        if (!sib) break;
+        const sibText = $(sib).text ? $(sib).text().trim() : (sib.data || '').trim();
+        if (sibText && sibText.length > 4 && !/^\s*$/.test(sibText)) {
+          caption = sibText.replace(/\s+/g, ' ').trim();
+          break;
+        }
+      }
+
       sampleImages.push({
         category: currentCategory,
-        url,
-        caption: caption || null,
-        thumbnail: thumbSrc ? resolveRelative(thumbSrc) : null,
+        url: fullResUrl,
+        caption,
+        thumbnail: thumbResolved !== fullResUrl ? thumbResolved : null,
       });
-      return;
-    }
-
-    if (tag === 'img') {
-      // Skip tiny UI elements
-      const w = parseInt($(el).attr('width') || '0', 10);
-      const h = parseInt($(el).attr('height') || '0', 10);
-      if ((w > 0 && w < 80) || (h > 0 && h < 80)) return;
-      const url = resolveImgUrl(el);
-      if (!url) return;
-      const alt = $(el).attr('alt') || null;
-      if (alt && /\b(logo|icon|badge|score|widget|rank|star|checkmark)\b/i.test(alt)) return;
-      sampleImages.push({ category: currentCategory, url, caption: alt, thumbnail: null });
     }
   });
 
-  // Deduplicate by URL
+  // Deduplicate by full-res URL
   const seen = new Set<string>();
   const dedupedImages = sampleImages.filter(img => {
     if (seen.has(img.url)) return false;
