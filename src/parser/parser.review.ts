@@ -581,12 +581,17 @@ export async function getReviewDetails(reviewSlug: string): Promise<IReviewResul
 
   // Find which page has camera samples
   const cameraPageNum = await findCameraPageNumber(baseReviewSlug, reviewId);
+  console.log(`[getReviewDetails] ${baseReviewSlug}: cameraPageNum = ${cameraPageNum}`);
 
   // Scrape camera samples from camera page
   let cameraSamples: ICameraSampleCategory[] = [];
   if (cameraPageNum) {
     const cameraUrl = `${baseUrl}/${baseReviewSlug}p${cameraPageNum}.php`;
+    console.log(`[getReviewDetails] Scraping camera samples from: ${cameraUrl}`);
     cameraSamples = await scrapeCameraPage(cameraUrl);
+    console.log(`[getReviewDetails] Got ${cameraSamples.length} categories, ${cameraSamples.reduce((sum, cat) => sum + cat.images.length, 0)} total images`);
+  } else {
+    console.log(`[getReviewDetails] No camera page found for ${baseReviewSlug}`);
   }
   // Scrape lens details — try pages in order until we find 2+ lens entries.
   // GSMArena puts the article-blurb-findings list on p1, p2, or p3 depending on the review.
