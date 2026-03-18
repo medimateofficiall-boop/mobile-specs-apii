@@ -462,10 +462,13 @@ export async function scrapeDxoPage(pageUrl: string): Promise<IDxoScore> {
   };
 
   let html = '';
+  let fetchError = '';
   try {
     html = await getDxoHtml(pageUrl);
-  } catch {
-    return FAILED;
+  } catch (err: any) {
+    fetchError = err?.message || String(err);
+    // Expose fetch error in the failed result so caller can debug
+    return { ...FAILED, _fetchError: fetchError } as any;
   }
 
   // Extract brand/model from URL for fallbacks
@@ -504,13 +507,15 @@ export async function getDxoScores(deviceName: string): Promise<IDxoScore | null
   if (cached) return cached;
 
   const { brand, model } = splitBrandModel(deviceName);
-  if (!model) return null; // Can't build a URL without a model
+  if (!model) return null;
 
   const url = buildDxoUrl(brand, model);
   const result = await scrapeDxoPage(url);
 
+  // Always cache and return — even failed results show the attempted URL
+  // so the caller knows what URL was tried and can debug
   if (result._source !== 'failed') {
     cacheSet(ck, result, 21600);
   }
-  return result._source === 'failed' ? null : result;
+  return result; // never return null — always return what we got
 }

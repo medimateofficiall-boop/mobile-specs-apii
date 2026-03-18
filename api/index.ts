@@ -1314,11 +1314,12 @@ app.get('/dxomark', async (request, reply) => {
   try {
     const data = await getDxoScores(name);
     if (!data) {
-      return reply.status(404).send({
+      return reply.status(400).send({
         status: false,
-        error: `No DXOMark page found for "${name}". Try a more specific device name.`,
+        error: `Could not parse brand/model from "${name}". Try including the brand e.g. "samsung galaxy s25 ultra".`,
       });
     }
+    // Always return — even _source:"failed" is useful (shows attempted URL + error)
     return { status: true, data };
   } catch (err: any) {
     return reply.status(500).send({ status: false, error: err?.message || String(err) });
