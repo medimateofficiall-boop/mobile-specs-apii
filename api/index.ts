@@ -1303,13 +1303,13 @@ app.get('/dxomark/debug', async (request, reply) => {
   const name = ((request.query as any).name || 'pixel 9 pro') as string;
 
   const DXO_BRAND_MAP: Record<string, { brand: string; modelPrefix?: string }> = {
-    'google pixel': { brand: 'Pixel' },
-    'google':       { brand: 'Pixel' },
-    'xiaomi poco':  { brand: 'Poco' },
-    'xiaomi redmi': { brand: 'Redmi' },
-    'vivo iqoo':    { brand: 'iQOO' },
+    'google pixel': { brand: 'Google', modelPrefix: 'Pixel' },
+    'pixel':        { brand: 'Google', modelPrefix: 'Pixel' },
+    'xiaomi poco':  { brand: 'Xiaomi', modelPrefix: 'Poco' },
+    'xiaomi redmi': { brand: 'Xiaomi', modelPrefix: 'Redmi' },
+    'vivo iqoo':    { brand: 'Vivo',   modelPrefix: 'iQOO' },
     'samsung galaxy': { brand: 'Samsung', modelPrefix: 'Galaxy' },
-    'apple iphone': { brand: 'Apple', modelPrefix: 'iPhone' },
+    'apple iphone':   { brand: 'Apple',   modelPrefix: 'iPhone' },
   };
 
   const lower = name.toLowerCase().trim();
@@ -1333,34 +1333,56 @@ app.get('/dxomark/debug', async (request, reply) => {
     model = parts.slice(1).join(' ');
   }
 
-  const url = `https://www.dxomark.com/smartphones/${brand}/${model.replace(/\s+/g, '-')}`;
+  // Title-case model slug
+  const modelSlug = model.trim().split(/\s+/)
+    .map((w: string) => w.toLowerCase() === 'iphone' ? 'iPhone' : w.charAt(0).toUpperCase() + w.slice(1))
+    .join('-');
+  const url = `https://www.dxomark.com/smartphones/${brand}/${modelSlug}`;
 
-  // Try fetching it
   const axios = (await import('axios')).default;
+  const cheerio = await import('cheerio');
   let fetchStatus: number | null = null;
   let fetchError: string | null = null;
   let bodyPreview: string | null = null;
   let hasNextData = false;
+  // What we can extract from the HTML
+  let scoreFound: string | null = null;
+  let classesWithScore: string[] = [];
 
   try {
     const resp = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
       },
       timeout: 15000,
       maxRedirects: 5,
-      validateStatus: () => true, // don't throw on 4xx/5xx
+      validateStatus: () => true,
     });
     fetchStatus = resp.status;
     const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-    bodyPreview = body.slice(0, 500);
+    bodyPreview = body.slice(0, 2000); // more preview
     hasNextData = body.includes('__NEXT_DATA__');
+
+    if (resp.status === 200) {
+      const $ = cheerio.load(body);
+      // Collect all elements that might contain scores
+      $('[class]').each((_: any, el: any) => {
+        const cls = $(el).attr('class') || '';
+        const txt = $(el).clone().children().remove().end().text().trim();
+        const n = parseInt(txt, 10);
+        if (!isNaN(n) && n >= 50 && n <= 200 && txt === String(n)) {
+          classesWithScore.push(`class="${cls}" text="${txt}"`);
+        }
+      });
+      scoreFound = classesWithScore.slice(0, 10).join(' | ');
+    }
   } catch (e: any) {
     fetchError = e?.message || String(e);
   }
 
-  return { name, brand, model, url, fetchStatus, fetchError, hasNextData, bodyPreview };
+  return { name, brand, model, modelSlug, url, fetchStatus, fetchError, hasNextData, scoreFound, bodyPreview };
 });
 
 app.get('/dxomark', async (request, reply) => {
