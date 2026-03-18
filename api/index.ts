@@ -1486,10 +1486,7 @@ app.get('/dxomark/review/url', async (request, reply) => {
     return reply.status(500).send({ status: false, error: err?.message || String(err) });
   }
 });
- *
- * Scrapes a specific DXOMark URL directly. Use this if you already have
- * the exact DXOMark page URL and want to bypass the search/slug resolution.
- */
+
 app.get('/dxomark/url', async (request, reply) => {
   const url = (request.query as any).url;
   if (!url || !url.includes('dxomark.com')) {
