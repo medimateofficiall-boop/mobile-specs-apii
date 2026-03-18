@@ -59,14 +59,14 @@ export interface IDxoSearchResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const KNOWN_BRANDS = [
-  // Multi-word first
+  // Multi-word first — must come before their single-word prefixes
   'Google Pixel', 'Xiaomi Poco', 'Xiaomi Redmi', 'Vivo iQOO',
   'Samsung Galaxy', 'Apple iPhone',
   // Single-word
   'Nothing', 'OnePlus', 'BlackBerry', 'HTC', 'ZTE', 'TCL', 'LG',
   'Samsung', 'Apple', 'Google', 'Huawei', 'Xiaomi', 'Oppo', 'Vivo',
   'Sony', 'Nokia', 'Motorola', 'Realme', 'Honor', 'Asus', 'Meizu',
-  'iQOO', 'Poco', 'Redmi', 'Pixel', 'Tecno', 'Infinix', 'Lava', 'Sharp',
+  'Pixel', 'iQOO', 'Poco', 'Redmi', 'Tecno', 'Infinix', 'Lava', 'Sharp',
 ];
 
 /**
@@ -78,13 +78,13 @@ const KNOWN_BRANDS = [
  *      "Xiaomi Redmi Note 14"→ DXOMark brand is "Redmi"
  */
 const DXO_BRAND_MAP: Record<string, { brand: string; modelPrefix?: string }> = {
-  'Google Pixel': { brand: 'Pixel' },           // google pixel 9 pro → Pixel/9-pro
-  'Google':       { brand: 'Pixel' },           // google 9 pro → Pixel/9-pro (edge case)
-  'Xiaomi Poco':  { brand: 'Poco' },            // xiaomi poco f7 → Poco/F7
-  'Xiaomi Redmi': { brand: 'Redmi' },           // xiaomi redmi note 14 → Redmi/Note-14
-  'Vivo iQOO':    { brand: 'iQOO' },            // vivo iqoo 13 → iQOO/13
-  'Samsung Galaxy': { brand: 'Samsung', modelPrefix: 'Galaxy' }, // samsung galaxy s25 → Samsung/Galaxy-S25
-  'Apple iPhone': { brand: 'Apple', modelPrefix: 'iPhone' },     // apple iphone 16 → Apple/iPhone-16
+  'Google Pixel': { brand: 'Google', modelPrefix: 'Pixel' }, // "google pixel 9 pro" → Google/Pixel-9-Pro
+  'Pixel':        { brand: 'Google', modelPrefix: 'Pixel' }, // "pixel 9 pro" → Google/Pixel-9-Pro
+  'Xiaomi Poco':  { brand: 'Xiaomi', modelPrefix: 'Poco' },
+  'Xiaomi Redmi': { brand: 'Xiaomi', modelPrefix: 'Redmi' },
+  'Vivo iQOO':    { brand: 'Vivo',   modelPrefix: 'iQOO' },
+  'Samsung Galaxy': { brand: 'Samsung', modelPrefix: 'Galaxy' },
+  'Apple iPhone':   { brand: 'Apple',   modelPrefix: 'iPhone' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
