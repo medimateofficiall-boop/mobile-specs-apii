@@ -264,6 +264,21 @@ export async function getPhoneDetails(slug: string): Promise<IPhoneDetails> {
         }
       }
     }
+    
+    // FINAL fallback: Search news section specifically
+    if (!review_url) {
+      $('a[href*="news"]').each((_, el) => {
+        const href = $(el).attr('href') || '';
+        const text = $(el).text().toLowerCase();
+        if (href.includes('camera') || text.includes('camera')) {
+          const fullUrl = href.startsWith('http') ? href : `${baseUrl}/${href}`;
+          if (isLinkRelatedToDevice(fullUrl, slug, brand, model)) {
+            review_url = fullUrl;
+            return false; // break
+          }
+        }
+      });
+    }
 
     // ── HD pictures page link ────────────────────────────────────────────────
     // GSMArena specs pages link to a pictures gallery: {device}-pictures-{id}.php
