@@ -1127,73 +1127,93 @@ app.get('/phone', async (request, reply) => {
   }
 
   if (cameraSamples.length === 0) {
-    // Fallback 2: Search GSMArena for model-name-only + 5G variant, try its opinions page.
-    // e.g. "vivo iQOO Z7 Pro" -> strip brand -> search "iQOO Z7 Pro 5G"
-    // This surfaces the _5g variant slug which the full-name search misses.
+    // Fallback 2: Fetch the brand page (e.g. vivo-phones-98.php) to find variant slugs.
+    // GSMArena search doesn't surface _5g variants, but the brand listing page has all of them.
+    // We find the brand page URL from the search results (it's always in the sidebar).
     try {
       const { getHtml } = await import('../src/parser/parser.service');
       const { load } = await import('cheerio');
 
-      // Strip brand prefix to get just the model tokens (e.g. "iQOO Z7 Pro")
-      const fullName = bestMatch.name; // "vivo iQOO Z7 Pro"
-      const brandPrefix = fullName.split(' ')[0].toLowerCase(); // "vivo"
-      const modelName = fullName.replace(new RegExp(`^${bestMatch.name.split(' ')[0]}\\s+`, 'i'), '').trim(); // "iQOO Z7 Pro"
-      const searchTerm = modelName.toLowerCase().includes('5g') ? modelName : modelName + ' 5G';
-      const searchUrl = `https://www.gsmarena.com/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(searchTerm)}`;
+      // The brand is the first token of the device slug: "vivo_iqoo_z7_pro-12484" -> "vivo"
+      const brandSlug = deviceSlug.split('_')[0];
+      // Model tokens we need ALL variants to contain: ["iqoo","z7","pro"]
+      const slugBase = deviceSlug.replace(/-\d+$/, '');
+      const modelTokens = slugBase.split('_').filter((t: string) => t.length > 1 && t !== brandSlug);
 
-      debug.steps.push({ action: 'variant_search', term: searchTerm, url: searchUrl });
-
-      const searchHtml = await getHtml(searchUrl);
+      // Find the brand page URL via a search — it always appears as "{brand}-phones-{id}.php"
+      const searchHtml = await getHtml(
+        `https://www.gsmarena.com/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(deviceSlug.replace(/-\d+$/, '').replace(/_/g, ' '))}`
+      );
       const $s = load(searchHtml);
-
-      // Grab ALL device page slugs from results (device pages end with -{number}.php)
-      const variantSlugs: string[] = [];
+      let brandPageUrl = '';
       $s('a[href]').each((_: number, el: any) => {
         const href = $s(el).attr('href') || '';
-        const slug = href.replace(/\.php$/, '').replace(/^\//, '');
-        if (/^[a-z0-9_]+-\d+$/.test(slug) && slug !== deviceSlug) {
-          if (!variantSlugs.includes(slug)) variantSlugs.push(slug);
+        if (href.match(new RegExp(`^${brandSlug}-phones-\\d+\\.php$`))) {
+          brandPageUrl = `https://www.gsmarena.com/${href}`;
+          return false;
         }
       });
 
-      debug.steps.push({ action: 'variant_slugs', slugs: variantSlugs });
+      debug.steps.push({ action: 'brand_page_lookup', brandSlug, modelTokens, brandPageUrl });
 
-      for (const vSlug of variantSlugs.slice(0, 5)) {
-        const m = vSlug.match(/^(.+)-(\d+)$/);
-        if (!m) continue;
-        const opinionsUrl = `https://www.gsmarena.com/${m[1]}-opinions-${m[2]}.php`;
-        debug.steps.push({ action: 'variant_opinions_attempt', url: opinionsUrl });
-        try {
-          const html = await getHtml(opinionsUrl);
-          const $ = load(html);
-          const links: string[] = [];
-          $('a[href]').each((_: number, el: any) => {
-            const href = $(el).attr('href') || '';
-            const lower = href.toLowerCase();
-            if (!lower.endsWith('.php')) return;
-            if (lower.includes('camera_samples') || lower.includes('camera-samples') ||
-                (lower.includes('-news-') && lower.includes('camera')) ||
-                lower.includes('-review-')) {
-              const full = href.startsWith('http') ? href : ('https://www.gsmarena.com/' + href);
-              if (!links.includes(full)) links.push(full);
-            }
-          });
-          debug.steps.push({ action: 'variant_opinions_links', slug: vSlug, count: links.length, links });
-          for (const link of links) {
-            if (await tryCameraUrl(link)) {
-              specs.review_url = link;
-              debug.review_url = link;
-              debug.steps.push({ action: 'variant_found', url: link });
-              break;
-            }
+      if (!brandPageUrl) {
+        debug.steps.push({ action: 'brand_page_not_found' });
+      } else {
+        const brandHtml = await getHtml(brandPageUrl);
+        const $b = load(brandHtml);
+
+        // Find all device slugs on the brand page that contain all our model tokens
+        const relatedSlugs: string[] = [];
+        $b('.makers ul li a[href]').each((_: number, el: any) => {
+          const href = $b(el).attr('href') || '';
+          const slug = href.replace(/\.php$/, '').replace(/^\//, '');
+          if (slug === deviceSlug) return; // skip the one we already tried
+          if (!/^[a-z0-9_]+-\d+$/.test(slug)) return;
+          const slugLower = slug.toLowerCase();
+          if (modelTokens.every((t: string) => slugLower.includes(t))) {
+            relatedSlugs.push(slug);
           }
-          if (cameraSamples.length > 0) break;
-        } catch (e: any) {
-          debug.steps.push({ action: 'variant_opinions_error', slug: vSlug, error: e?.message });
+        });
+
+        debug.steps.push({ action: 'brand_related_slugs', slugs: relatedSlugs });
+
+        for (const relSlug of relatedSlugs.slice(0, 5)) {
+          const m = relSlug.match(/^(.+)-(\d+)$/);
+          if (!m) continue;
+          const opinionsUrl = `https://www.gsmarena.com/${m[1]}-opinions-${m[2]}.php`;
+          debug.steps.push({ action: 'brand_opinions_attempt', url: opinionsUrl });
+          try {
+            const html = await getHtml(opinionsUrl);
+            const $ = load(html);
+            const links: string[] = [];
+            $('a[href]').each((_: number, el: any) => {
+              const href = $(el).attr('href') || '';
+              const lower = href.toLowerCase();
+              if (!lower.endsWith('.php')) return;
+              if (lower.includes('camera_samples') || lower.includes('camera-samples') ||
+                  (lower.includes('-news-') && lower.includes('camera')) ||
+                  lower.includes('-review-')) {
+                const full = href.startsWith('http') ? href : ('https://www.gsmarena.com/' + href);
+                if (!links.includes(full)) links.push(full);
+              }
+            });
+            debug.steps.push({ action: 'brand_opinions_links', slug: relSlug, count: links.length, links });
+            for (const link of links) {
+              if (await tryCameraUrl(link)) {
+                specs.review_url = link;
+                debug.review_url = link;
+                debug.steps.push({ action: 'brand_variant_found', url: link });
+                break;
+              }
+            }
+            if (cameraSamples.length > 0) break;
+          } catch (e: any) {
+            debug.steps.push({ action: 'brand_opinions_error', slug: relSlug, error: e?.message });
+          }
         }
       }
     } catch (e: any) {
-      debug.steps.push({ action: 'variant_search_error', error: e?.message });
+      debug.steps.push({ action: 'brand_fallback_error', error: e?.message });
     }
   }
 
