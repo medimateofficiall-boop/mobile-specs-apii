@@ -863,10 +863,7 @@ export async function scrapeDxoReview(reviewUrl: string, nocache = false): Promi
   let prosCons = '';
 
   // Garbage patterns that bleed in from page navigation / lux labels / glossary
-  const GARBAGE_RE = /^\d+\s*(lux|k|ev|db|fps)$/i |
-    /^(spatial|temporal)\s*noise$/i |
-    /^(our company|glossary|press relations|join us|contact|rankings|reviews|about|articles|insights|smartphones|cameras|speakers|laptops)$/i |
-    /^(ΔEV\d|brightness|diana|eugene|illuminance)/i;
+  const GARBAGE_RE = /^\d+\s*(lux|k|ev|db|fps)$|^(spatial|temporal)\s*noise$|^(our company|glossary|press relations|join us|contact|rankings|reviews|about|articles|insights|smartphones|cameras|speakers|laptops)$|^(ΔEV\d|brightness on face|diana|eugene|illuminance)/i;
 
   $('h6, h5, h4, h3, li').each((_: any, el: any) => {
     const tag = el.name;
