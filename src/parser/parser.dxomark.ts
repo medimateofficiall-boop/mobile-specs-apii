@@ -53,16 +53,39 @@ export interface IDxoSearchResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Known brands — used to split "Samsung Galaxy S25 Ultra" → brand + model
-// Order matters: longer/multi-word brands first
+// Known brands — mirrors brandPrefixes from parser.phone-details.ts
+// Order matters: longer/multi-word entries first so "Google Pixel" matches
+// before "Google", and "Xiaomi Poco" before "Xiaomi".
 // ─────────────────────────────────────────────────────────────────────────────
 
 const KNOWN_BRANDS = [
+  // Multi-word first
+  'Google Pixel', 'Xiaomi Poco', 'Xiaomi Redmi', 'Vivo iQOO',
+  'Samsung Galaxy', 'Apple iPhone',
+  // Single-word
   'Nothing', 'OnePlus', 'BlackBerry', 'HTC', 'ZTE', 'TCL', 'LG',
   'Samsung', 'Apple', 'Google', 'Huawei', 'Xiaomi', 'Oppo', 'Vivo',
   'Sony', 'Nokia', 'Motorola', 'Realme', 'Honor', 'Asus', 'Meizu',
-  'iQOO', 'Poco', 'Redmi', 'Tecno', 'Infinix', 'Lava', 'Sharp',
+  'iQOO', 'Poco', 'Redmi', 'Pixel', 'Tecno', 'Infinix', 'Lava', 'Sharp',
 ];
+
+/**
+ * DXOMark uses different brand slugs than what users type.
+ * e.g. "Google Pixel 9 Pro" → DXOMark brand is "Pixel", not "Google"
+ *      "Apple iPhone 16"    → DXOMark brand is "Apple", model is "iPhone-16"
+ *      "Xiaomi Poco F7"     → DXOMark brand is "Poco"
+ *      "Vivo iQOO 13"       → DXOMark brand is "iQOO"
+ *      "Xiaomi Redmi Note 14"→ DXOMark brand is "Redmi"
+ */
+const DXO_BRAND_MAP: Record<string, { brand: string; modelPrefix?: string }> = {
+  'Google Pixel': { brand: 'Pixel' },           // google pixel 9 pro → Pixel/9-pro
+  'Google':       { brand: 'Pixel' },           // google 9 pro → Pixel/9-pro (edge case)
+  'Xiaomi Poco':  { brand: 'Poco' },            // xiaomi poco f7 → Poco/F7
+  'Xiaomi Redmi': { brand: 'Redmi' },           // xiaomi redmi note 14 → Redmi/Note-14
+  'Vivo iQOO':    { brand: 'iQOO' },            // vivo iqoo 13 → iQOO/13
+  'Samsung Galaxy': { brand: 'Samsung', modelPrefix: 'Galaxy' }, // samsung galaxy s25 → Samsung/Galaxy-S25
+  'Apple iPhone': { brand: 'Apple', modelPrefix: 'iPhone' },     // apple iphone 16 → Apple/iPhone-16
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -114,40 +137,51 @@ function deepCollect(obj: any, key: string, depth = 10): any[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Brand + model splitter
-// "Samsung Galaxy S25 Ultra" → { brand: "Samsung", model: "Galaxy S25 Ultra" }
+// Brand + model splitter → produces DXOMark-correct brand and model slugs
 // ─────────────────────────────────────────────────────────────────────────────
 
 function splitBrandModel(deviceName: string): { brand: string; model: string } {
   const name = deviceName.trim();
   const lower = name.toLowerCase();
 
-  // Try known brands, longest first to handle multi-word brands
+  // Sort known brands longest-first so "Google Pixel" matches before "Google"
   const sorted = [...KNOWN_BRANDS].sort((a, b) => b.length - a.length);
-  for (const brand of sorted) {
-    if (lower.startsWith(brand.toLowerCase())) {
-      const model = name.slice(brand.length).trim();
-      if (model.length > 0) {
-        return { brand, model };
-      }
+
+  for (const knownBrand of sorted) {
+    if (!lower.startsWith(knownBrand.toLowerCase())) continue;
+
+    // Remaining part after stripping the known brand
+    const rest = name.slice(knownBrand.length).trim();
+    if (!rest) continue; // brand only, no model — skip
+
+    // Check if there's a DXOMark-specific mapping for this brand
+    const mapping = DXO_BRAND_MAP[knownBrand];
+    if (mapping) {
+      // Some brands need the modelPrefix prepended back
+      // e.g. "Samsung Galaxy" brand → DXO brand="Samsung", model="Galaxy-S25-Ultra"
+      const model = mapping.modelPrefix ? `${mapping.modelPrefix} ${rest}` : rest;
+      return { brand: mapping.brand, model };
     }
+
+    // No special mapping — use the known brand as-is
+    return { brand: knownBrand, model: rest };
   }
 
   // Fallback: first word = brand, rest = model
   const parts = name.split(' ');
-  return { brand: parts[0], model: parts.slice(1).join(' ') };
+  const brand = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  return { brand, model: parts.slice(1).join(' ') };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// URL builder — the correct DXOMark pattern Tarun found
+// URL builder — /smartphones/{Brand}/{Model-Slug}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildDxoUrl(brand: string, model: string): string {
-  // Capitalize brand properly (e.g. "samsung" → "Samsung")
-  const brandSlug = brand.charAt(0).toUpperCase() + brand.slice(1);
-  // Model: spaces → dashes, preserve casing (DXOMark uses title case)
+  // Preserve model casing exactly as-is (DXOMark is inconsistent — "9-pro" not "9-Pro")
+  // Just replace spaces with dashes.
   const modelSlug = model.trim().replace(/\s+/g, '-');
-  return `${DXO_BASE}/smartphones/${brandSlug}/${modelSlug}`;
+  return `${DXO_BASE}/smartphones/${brand}/${modelSlug}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
