@@ -1124,17 +1124,38 @@ app.get('/phone', async (request, reply) => {
   // 5G variant fallback:
   // Some phones exist as TWO separate GSMArena entries (e.g. iQOO Z7 Pro vs iQOO Z7 Pro 5G),
   // and the camera article may only be linked from the _5g variant's opinions page.
-  // If we still have no camera samples, search for "{name} 5G" and try that device's opinions page.
+  // We bypass parserService.search() here because its scoring logic drops results where the
+  // brand name ("vivo") doesn't appear in the result title ("iQOO Z7 Pro 5G"). Instead we
+  // directly scrape the GSMArena search HTML and grab any href that contains "_5g".
   if (cameraSamples.length === 0 && !bestMatch.name.toLowerCase().includes('5g')) {
     try {
       const { getHtml } = await import('../src/parser/parser.service');
       const { load } = await import('cheerio');
 
-      debug.steps.push({ action: '5g_variant_search', query: bestMatch.name + ' 5G' });
-      const results5g = await parserService.search(bestMatch.name + ' 5G');
+      // Use model name (not brand+model) to avoid scoring filter killing the result
+      // e.g. "vivo iQOO Z7 Pro" -> search for "iQOO Z7 Pro 5G"
+      const modelOnly = specs.model || bestMatch.name;
+      const searchQuery5g = encodeURIComponent(modelOnly + ' 5G');
+      const searchUrl5g = `https://www.gsmarena.com/results.php3?sQuickSearch=yes&sName=${searchQuery5g}`;
 
-      for (const result5g of results5g.slice(0, 3)) {
-        const slug5g = result5g.slug.replace(/^\//, '');
+      debug.steps.push({ action: '5g_variant_search', url: searchUrl5g });
+
+      const searchHtml5g = await getHtml(searchUrl5g);
+      const $sr = load(searchHtml5g);
+
+      // Collect all result slugs that contain _5g — no scoring, just grab hrefs directly
+      const slugs5g: string[] = [];
+      $sr('.makers ul li a[href]').each((_: number, el: any) => {
+        const href: string = $sr(el).attr('href') || '';
+        if (href.toLowerCase().includes('_5g') || href.toLowerCase().includes('-5g')) {
+          const s = href.replace(/\.php$/, '').replace(/^\//, '');
+          if (!slugs5g.includes(s)) slugs5g.push(s);
+        }
+      });
+
+      debug.steps.push({ action: '5g_slugs_found', slugs: slugs5g });
+
+      for (const slug5g of slugs5g.slice(0, 3)) {
         const slugMatch5g = slug5g.match(/^(.+)-(\d+)$/);
         if (!slugMatch5g) continue;
 
@@ -1170,9 +1191,13 @@ app.get('/phone', async (request, reply) => {
           }
 
           if (cameraSamples.length > 0) break;
-        } catch { /* this variant's opinions page failed, try next */ }
+        } catch (e: any) {
+          debug.steps.push({ action: '5g_opinions_error', error: e?.message });
+        }
       }
-    } catch { /* 5G variant search failed */ }
+    } catch (e: any) {
+      debug.steps.push({ action: '5g_search_error', error: (e as any)?.message });
+    }
   }
 
   const result = {
