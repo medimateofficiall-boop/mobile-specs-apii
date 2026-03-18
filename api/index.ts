@@ -1178,6 +1178,74 @@ app.get('/phone', async (request, reply) => {
     }
   }
 
+  // Final fallback: try the _5g variant of the slug directly.
+  // For phones like iQOO Z7 Pro, the non-5G and 5G entries are separate GSMArena pages
+  // with zero cross-links. We construct "{slugBase}_5g" and use GSMArena's autocomplete
+  // JSON API to discover the numeric ID, then check that variant's opinions page.
+  if (cameraSamples.length === 0) {
+    try {
+      const { getHtml } = await import('../src/parser/parser.service');
+      const { load } = await import('cheerio');
+      const axios = (await import('axios')).default;
+
+      const slugBase = deviceSlug.replace(/-\d+$/, '');
+      // Only try if slug doesn't already end in _5g
+      if (!slugBase.endsWith('_5g')) {
+        const modelQuery = slugBase.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+        const acUrl = `https://www.gsmarena.com/quicksearch-8.php?q=${encodeURIComponent(modelQuery + ' 5G')}`;
+        debug.steps.push({ action: '5g_autocomplete', url: acUrl });
+
+        const acResp = await axios.get(acUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          timeout: 8000,
+        });
+
+        // Autocomplete returns JSON array: [{id, name, img}]
+        const acResults: Array<{id: string, name?: string}> = Array.isArray(acResp.data) ? acResp.data : [];
+        debug.steps.push({ action: '5g_autocomplete_results', results: acResults.slice(0, 5) });
+
+        // Find the first result whose id starts with our slugBase + _5g
+        const match5g = acResults.find((r: any) => {
+          const id = (r.id || r.url || '').toLowerCase();
+          return id.includes(slugBase + '_5g') || id.includes(slugBase.replace(/_/g, '-') + '-5g');
+        });
+
+        if (match5g) {
+          const slug5g = (match5g.id || '').replace(/\.php$/, '').replace(/^\//, '');
+          const m = slug5g.match(/^(.+)-(\d+)$/);
+          if (m) {
+            const opinionsUrl5g = `https://www.gsmarena.com/${m[1]}-opinions-${m[2]}.php`;
+            debug.steps.push({ action: '5g_opinions_attempt', url: opinionsUrl5g });
+            const html5g = await getHtml(opinionsUrl5g);
+            const $5g = load(html5g);
+            const links5g: string[] = [];
+            $5g('a[href]').each((_: number, el: any) => {
+              const href = ($5g(el).attr('href') || '');
+              const lower = href.toLowerCase();
+              if (!lower.endsWith('.php')) return;
+              if (lower.includes('camera_samples') || lower.includes('camera-samples') ||
+                  (lower.includes('-news-') && lower.includes('camera')) ||
+                  lower.includes('-review-')) {
+                const full = href.startsWith('http') ? href : ('https://www.gsmarena.com/' + href);
+                if (!links5g.includes(full)) links5g.push(full);
+              }
+            });
+            debug.steps.push({ action: '5g_opinions_links', count: links5g.length, links: links5g });
+            for (const link of links5g) {
+              if (await tryCameraUrl(link)) {
+                specs.review_url = link;
+                debug.review_url = link;
+                debug.steps.push({ action: '5g_final_found', url: link });
+                break;
+              }
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      debug.steps.push({ action: '5g_autocomplete_error', error: e?.message });
+    }
+  }
 
   const result = {
     status: true,
