@@ -137,18 +137,12 @@ export async function getPhoneDetails(slug: string): Promise<IPhoneDetails> {
         return this.type === 'text';
       }).text().trim();
       
-    // Primary device image — GSMArena specs pages serve this as the bigpic URL directly
-    // e.g. https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-17-pro-max.jpg
-    let imageUrl = $('.specs-photo-main a img').attr('src')
+    // Primary device image from the specs page.
+    // GSMArena serves this as bigpic (~300px) — we keep whatever URL the page gives us
+    // and let the pictures-page scraper below upgrade it to full-res.
+    const imageUrl = $('.specs-photo-main a img').attr('src')
       || $('.specs-photo-main img').attr('src')
       || $('.specs-photo img').attr('src');
-    // Ensure it is the bigpic version — upgrade any small /vv/pics/ URLs
-    if (imageUrl && imageUrl.includes('/vv/pics/')) {
-      // /vv/pics/apple/apple-iphone-17-pro-max-1.jpg → /vv/bigpic/apple-iphone-17-pro-max.jpg
-      imageUrl = imageUrl
-        .replace(/\/vv\/pics\/[^/]+\//, '/vv/bigpic/')
-        .replace(/-\d+\.jpg$/, '.jpg');
-    }
 
     // ── Device colour images ──────────────────────────────────────────────────
     const device_images: IDeviceImage[] = [];
@@ -303,21 +297,52 @@ export async function getPhoneDetails(slug: string): Promise<IPhoneDetails> {
       }
     });
 
-    // Scrape the first HD photo from the pictures gallery page
+    // Scrape the first HD photo from the pictures gallery page.
+    // GSMArena pictures pages serve device press shots as imgroot thumbnails (/-160/ or /-1200/).
+    // Converting to /-/-/ gives the original full-resolution image (often 1000-1500px).
     let hdImageUrl: string | undefined;
     if (picturesPageUrl) {
       try {
         const picHtml = await getHtml(picturesPageUrl);
         const $pic = cheerio.load(picHtml);
-        // Pictures pages have <div class="specs-photo-main"> with the full-res img
-        // or a gallery grid of images
-        const firstPic = $pic('.specs-photo-main a img, .gallery img, .photos-list img')
-          .first().attr('src');
-        if (firstPic && firstPic.includes('gsmarena.com')) {
-          hdImageUrl = firstPic;
+
+        // Strategy 1: imgroot thumbnail in any <img> — convert size token to full-res
+        let foundThumb: string | undefined;
+        $pic('img').each((_, el) => {
+          const src = $pic(el).attr('src') || $pic(el).attr('data-src') || '';
+          if (src.includes('/imgroot/') && src.includes('gsmarena.com')) {
+            foundThumb = src;
+            return false; // take first
+          }
+        });
+        if (foundThumb) {
+          // /-160/ or /-1200/ -> /-/-/ (any size token -> original full-res)
+          hdImageUrl = foundThumb.replace(/\/-\d+[^/]*\/(?=[^/]+$)/, '/-/-/');
+        }
+
+        // Strategy 2: lightbox <a href> with full-res imgroot
+        if (!hdImageUrl) {
+          $pic('a[href]').each((_, el) => {
+            const href = $pic(el).attr('href') || '';
+            if (href.includes('/imgroot/') && href.includes('gsmarena.com')) {
+              hdImageUrl = href;
+              return false;
+            }
+          });
+        }
+
+        // Strategy 3: /vv/pics/ without size suffix — better than bigpic
+        if (!hdImageUrl) {
+          $pic('img').each((_, el) => {
+            const src = $pic(el).attr('src') || '';
+            if (src.includes('/vv/pics/') && src.includes('gsmarena.com')) {
+              hdImageUrl = src.replace(/-\d+(\.[\w]+)$/, '$1');
+              return false;
+            }
+          });
         }
       } catch {
-        // pictures page failed — hdImageUrl stays undefined
+        // pictures page failed — hdImageUrl stays undefined, falls back to bigpic
       }
     }
 
