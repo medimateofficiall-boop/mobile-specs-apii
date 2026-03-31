@@ -298,60 +298,72 @@ export async function getPhoneDetails(slug: string): Promise<IPhoneDetails> {
     });
 
     // Scrape the first HD photo from the pictures gallery page.
-    // GSMArena pictures pages serve device press shots as imgroot thumbnails (/-160/ or /-1200/).
-    // Converting to /-/-/ gives the original full-resolution image (often 1000-1500px).
+    //
+    // GSMArena pictures pages have two sections:
+    //   1. "Official images" — fdn2.gsmarena.com/vv/pics/<brand>/<model>-1.jpg
+    //      These are full-resolution press renders served as-is (no size token).
+    //      ← THIS IS WHAT WE WANT.
+    //   2. Review/sidebar thumbnails — fdn.gsmarena.com/imgroot/reviews/.../-347x151/gsmarena_002.jpg
+    //      These are small cropped stills from review articles, NOT device press shots.
+    //      ← We must skip these.
+    //
+    // Strategy (highest priority first):
+    //   Pass 1: /vv/pics/ on fdn2.gsmarena.com — official press images, already full-res, use as-is.
+    //   Pass 2: /imgroot/ path with /photos/ or /design/ segment — full-res via /-/-/ token swap.
+    //   Pass 3: any /imgroot/ path that isn't a review/lifestyle thumbnail — /-/-/ token swap.
     let hdImageUrl: string | undefined;
     if (picturesPageUrl) {
       try {
         const picHtml = await getHtml(picturesPageUrl);
         const $pic = cheerio.load(picHtml);
 
-        // GSMArena pictures pages mix clean press renders with lifestyle/inline shots.
-        // We want the clean press render — skip lifestyle and camera paths.
-        // Path clues: /photos/ or /design/ = clean render; /lifestyle/ /inline/ /camera = skip.
-
-        const isCleanRender = (src: string) =>
-          src.includes('/imgroot/') &&
-          src.includes('gsmarena.com') &&
-          !src.includes('/camera') &&
-          !src.includes('/lifestyle/') &&
-          !src.includes('/inline/');
-
-        // Pass 1: prefer /photos/ or /design/ path
-        let foundThumb: string | undefined;
+        // Pass 1 — /vv/pics/ official press images (fdn2.gsmarena.com).
+        // These are the numbered images in the "official images" section of the pictures page
+        // (e.g. /vv/pics/samsung/samsung-galaxy-s25-ultra-sm-s938-1.jpg).
+        // They are already full-resolution — use the URL exactly as scraped, no transformation.
         $pic('img').each((_, el) => {
           const src = $pic(el).attr('src') || $pic(el).attr('data-src') || '';
-          if (isCleanRender(src) && (src.includes('/photos/') || src.includes('/design/'))) {
-            foundThumb = src;
-            return false;
+          if (src.includes('/vv/pics/') && src.includes('gsmarena.com') && src.match(/\.jpe?g$/i)) {
+            hdImageUrl = src;
+            return false; // take first match
           }
         });
 
-        // Pass 2: any non-lifestyle imgroot
-        if (!foundThumb) {
+        if (!hdImageUrl) {
+          // Helper: true for clean press-render imgroot paths (excludes review/lifestyle shots)
+          const isCleanImgroot = (src: string) =>
+            src.includes('/imgroot/') &&
+            src.includes('gsmarena.com') &&
+            !src.includes('/reviews/') &&
+            !src.includes('/camera') &&
+            !src.includes('/lifestyle/') &&
+            !src.includes('/inline/');
+
+          // Pass 2 — /imgroot/ path that explicitly signals a press photo (/photos/ or /design/)
+          let foundThumb: string | undefined;
           $pic('img').each((_, el) => {
             const src = $pic(el).attr('src') || $pic(el).attr('data-src') || '';
-            if (isCleanRender(src)) {
+            if (isCleanImgroot(src) && (src.includes('/photos/') || src.includes('/design/'))) {
               foundThumb = src;
               return false;
             }
           });
-        }
 
-        if (foundThumb) {
-          // Replace any size token (/-160/, /-1200/, /-1200w5/) with /-/-/ for full-res
-          hdImageUrl = foundThumb.replace(/\/-[^/]+\/(?=[^/]+\.jpg$)/, '/-/-/');
-        }
+          // Pass 3 — any non-lifestyle, non-review imgroot
+          if (!foundThumb) {
+            $pic('img').each((_, el) => {
+              const src = $pic(el).attr('src') || $pic(el).attr('data-src') || '';
+              if (isCleanImgroot(src)) {
+                foundThumb = src;
+                return false;
+              }
+            });
+          }
 
-        // Fallback: /vv/pics/ URL (better than bigpic, always a clean device shot)
-        if (!hdImageUrl) {
-          $pic('img').each((_, el) => {
-            const src = $pic(el).attr('src') || '';
-            if (src.includes('/vv/pics/') && src.includes('gsmarena.com')) {
-              hdImageUrl = src.replace(/-\d+(\.[\w]+)$/, '$1');
-              return false;
-            }
-          });
+          if (foundThumb) {
+            // Replace any size token (/-160/, /-1200/, /-1200w5/, /-347x151/) with /-/-/ for full-res
+            hdImageUrl = foundThumb.replace(/\/-[^/]+\/(?=[^/]+\.jpe?g$)/i, '/-/-/');
+          }
         }
       } catch {
         // pictures page failed — hdImageUrl stays undefined, falls back to bigpic
