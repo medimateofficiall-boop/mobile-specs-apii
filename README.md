@@ -8,10 +8,29 @@ A TypeScript/Fastify REST API that scrapes GSMArena for device specs, reviews, d
 
 ```bash
 pnpm install
-pnpm dev        # hot-reload dev server
+pnpm dev        # hot-reload dev server → http://localhost:4000
 pnpm build      # compile to dist/
 pnpm start      # run compiled build
 ```
+
+> **Prerequisites:** Node.js 18+ and pnpm (`npm install -g pnpm`)
+
+### Running locally
+
+```bash
+pnpm install
+pnpm dev
+```
+
+The server starts at `http://localhost:4000`. The app is deployed as a Vercel serverless function — `pnpm dev` runs a local Fastify server for development only.
+
+### Deploying to Vercel
+
+```bash
+vercel deploy
+```
+
+No extra config needed — `vercel.json` is already set up.
 
 ---
 
@@ -115,17 +134,33 @@ GET /review/:reviewSlug/images
 
 ---
 
+## DXOMark
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/dxomark/:slug` | DXOMark scores + sub-scores + pros/cons for a device |
+| GET | `/dxomark/search?query=<q>` | Search DXOMark by device name |
+| GET | `/dxomark/url?url=<dxomark-url>` | Scrape any DXOMark page by URL |
+
+Example: `GET /dxomark/samsung-galaxy-s25-ultra`
+
+Response includes overall score, sub-scores (Photo, Video, Zoom, Bokeh, Preview), pros, cons, and ranking.
+
+---
+
 ## Project structure
 
 ```
 ├── api/
-│   └── index.ts                    # Fastify routes (Vercel handler)
+│   └── index.ts                    # Fastify routes (Vercel handler + local dev server)
 └── src/
     ├── server.ts                   # baseUrl constant
+    ├── cache.ts                    # Redis (Upstash) + in-memory caching
     ├── types.ts                    # All TypeScript interfaces
     └── parser/
         ├── parser.service.ts       # getHtml, search, latest, top lists
         ├── parser.brands.ts        # getBrands
         ├── parser.phone-details.ts # getPhoneDetails (+ device_images, review_url)
-        └── parser.review.ts        # getReviewDetails (hero, article, camera samples)
+        ├── parser.review.ts        # getReviewDetails (hero, article, camera samples)
+        └── parser.dxomark.ts       # DXOMark scores, search, rankings
 ```
