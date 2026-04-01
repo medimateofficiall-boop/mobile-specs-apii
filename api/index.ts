@@ -1750,6 +1750,16 @@ app.get('/:slug', async (request) => {
 
 let ready = false;
 
+// ── Local dev server (skipped on Vercel) ────────────────────────────────────
+if (!process.env.VERCEL) {
+  const PORT = parseInt(process.env.PORT || '4000', 10);
+  app.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
+    if (err) { console.error(err); process.exit(1); }
+    console.log(`\n🚀  Mobile Specs API running at ${address}`);
+    console.log(`   Try: http://localhost:${PORT}/brands\n`);
+  });
+}
+
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (!ready) {
     await app.ready();
